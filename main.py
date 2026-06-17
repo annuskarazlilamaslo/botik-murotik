@@ -5,6 +5,7 @@ import discord
 from discord.ext import commands
 import random
 import time
+import re
 
 import config
 from cloud_manager import get_download_url
@@ -60,19 +61,21 @@ async def play_playlist(ctx, voice):
             executable=config.FFMPEG_PATH,
             source=stream_url,
             before_options="-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5",
-            options="-vn"
+            options="-vn -ar 48000 -ac 2"
         )
         
         await asyncio.sleep(1)
         
         track_user = track.get("user", "Общий")
         
+        pretty_name = re.sub(r"\(.*?\)", "", filename)
         pretty_name = (
-            filename
+            pretty_name
             .replace("_", " ")
             .replace(".mp3", "")
             .replace(".wav", "")
             .replace(".ogg", "")
+            .strip()
         )
 
         voice.play(source)
@@ -94,7 +97,7 @@ async def play_playlist(ctx, voice):
                 player.current_index = 0
             else:
                 await ctx.send("⏹ Плейлист закончен")
-                break
+                return
 
 
 @bot.event
