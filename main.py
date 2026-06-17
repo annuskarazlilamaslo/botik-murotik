@@ -6,11 +6,12 @@ from discord.ext import commands
 import random
 import time
 import re
+import requests
 
 import config
 from cloud_manager import get_download_url
-from music_player import MusicPlayer
 from cloud_manager import upload_track_to_cloud
+from music_player import MusicPlayer
 
 
 if os.name == 'nt':
@@ -32,8 +33,36 @@ bot.remove_command("help")
 player = MusicPlayer()
 
 is_skipping_backward = False
+skip_event = asyncio.Event()
 
 
+def download_track(url, filename):
+    """Скачивает трек во временную папку Render"""
+    path = f"/tmp/{filename}"
+
+    box = requests.get(url, stream=True, timeout=60)
+    box.raise_for_status()
+
+    with open(path, "wb") as file:
+        for chunk in box.iter_content(chunk_size=1024 * 512):
+            if chunk:
+                file.write(chunk)
+
+    return path
+
+
+def pretty_name(filename):
+    name = re.sub(r"\(.*?\)", "", filename)
+    return (
+        name
+        .replace("_", " ")
+        .replace(".mp3", "")
+        .replace(".wav", "")
+        .replace(".ogg", "")
+        .strip()
+    )
+ 
+ 
 async def play_playlist(ctx, voice):
     """Цикл проигрывания треков"""
 
@@ -41,68 +70,58 @@ async def play_playlist(ctx, voice):
     while voice and voice.is_connected():
         if not player.playlist:
             await ctx.send("Плейлист пуст 😿")
-            break
+            return
         
-        if player.current_index >= len(player.playlist):
-            player.current_index = 0
-
-        track = player.playlist[player.current_index]
-
-        filename = track["name"]
-        
-        if voice.is_playing():
-            voice.stop()
-
-        time_start = time.time()
-        stream_url = get_download_url(track["path"])
-        print(f"⏱️ [DEBUG] URL для '{filename}' получен от Яндекса за {time.time() - time_start:.2f} сек")
-        
-        source = discord.FFmpegPCMAudio(
-            executable=config.FFMPEG_PATH,
-            source=stream_url,
-            before_options="-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5",
-            options="-vn -ar 48000 -ac 2"
-        )
-        
-        await asyncio.sleep(1)
-        
-        track_user = track.get("user", "Общий")
-        
-        pretty_name = re.sub(r"\(.*?\)", "", filename)
-        pretty_name = (
-            pretty_name
-            .replace("_", " ")
-            .replace(".mp3", "")
-            .replace(".wav", "")
-            .replace(".ogg", "")
-            .strip()
-        )
-
-        voice.play(source)
-        await ctx.send(f"▶️ Из папки **[{track_user}]** играет: `{pretty_name}`")
-        await asyncio.sleep(1)
-
-        while voice.is_playing() or voice.is_paused():
-            await asyncio.sleep(1)
-            if not voice.is_connected():
-                return
-        
-        if is_skipping_backward:
-            is_skipping_backward = False
-            continue
-        
-        player.current_index += 1
         if player.current_index >= len(player.playlist):
             if player.loop_mode:
                 player.current_index = 0
             else:
                 await ctx.send("⏹ Плейлист закончен")
                 return
+            track = player.playlist[player.current_index]
+
+            filename = track["name"]
+            track_user = track.get("user", "Общий")
+
+            skip_event.clear()
+            
+            stream_url = get_download_url(track["path"])
+            
+            await ctx.send(f"⬇️ Загружаю: `{pretty_name(filename)}`")
+            local_file = await asyncio.to_thread(download_track, stream_url, filename)
+            
+            source = discord.FFmpegPCMAudio(
+                executable=config.FFMPEG_PATH,
+                source=local_file,
+                options="-vn -ar 48000 -ac 2"
+            )
+
+        event = asyncio.Event()
+
+        def after_play(error):
+            event.set()
+
+        voice.play(source, after=after_play)
+
+        await ctx.send(f"▶️ Из папки **[{track_user}]** играет: `{pretty_name(filename)}`")
+
+        await event.wait()
+        try:
+            os.remove(local_file)
+        except:
+            pass
+
+        if is_skipping_backward:
+            is_skipping_backward = False
+            continue
+
+        player.current_index += 1
 
 
 @bot.event
 async def on_ready():
     """Запуск бота"""
+    
     from keep_alive import start_server
     asyncio.create_task(start_server())
 
@@ -129,7 +148,7 @@ async def play(ctx):
 
     if voice.is_playing():
         await ctx.send(
-            "🎶 Эй! Музыка уже играет. Зачем мы жмёшь эту кнопочку? 😿"
+            "🎶 Эй! Музыка уже играет. Зачем ты жмёшь эту кнопочку? 😿"
         )
         return
 
@@ -140,12 +159,13 @@ async def play(ctx):
         return await ctx.send("В папке music пусто 😿")
 
     await ctx.send(f"🎶 Найдено треков: {len(player.playlist)}")
-    await play_playlist(ctx, voice)
+    asyncio.create_task(play_playlist(ctx, voice))
 
 
 @bot.command(name="обновить", aliases=["update", "синхронизировать", "апдейт"])
 async def update(ctx):
     """Обновить список треков из облака"""
+    
     await ctx.send("🔄 Обновляю список треков из облака, подожди...")
     player.load_playlist()
     await ctx.send(f"✅ Готово! Всего треков в системе: {len(player.playlist)}")
@@ -237,6 +257,7 @@ async def stop(ctx):
 @bot.command(name="пауза", aliases=["pause"])
 async def pause(ctx):
     """Поставить музыку на паузу"""
+    
     voice = ctx.voice_client
     if voice and voice.is_playing():
         voice.pause()
@@ -293,7 +314,7 @@ async def help(ctx):
 @bot.command(name="добавить")
 async def add_track(ctx):
     if not ctx.message.attachments:
-        return await ctx.send("Прикрепи mp3-файл 😺")
+        return await ctx.send("Прикрепи файл 😼")
 
     file = ctx.message.attachments[0]
 
