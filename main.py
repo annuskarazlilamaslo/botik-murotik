@@ -4,7 +4,6 @@ import psutil
 import discord
 from discord.ext import commands
 import random
-import time
 import re
 import requests
 
@@ -78,36 +77,47 @@ async def play_playlist(ctx, voice):
             else:
                 await ctx.send("⏹ Плейлист закончен")
                 return
-            track = player.playlist[player.current_index]
+        if player.current_index >= len(player.playlist):
+            if player.loop_mode:
+                player.current_index = 0
+            else:
+                await ctx.send("⏹ Плейлист закончен")
+                return
 
-            filename = track["name"]
-            track_user = track.get("user", "Общий")
+        track = player.playlist[player.current_index]
+        filename = track["name"]
+        track_user = track.get("user", "Общий")
 
-            skip_event.clear()
-            
-            stream_url = get_download_url(track["path"])
-            
-            await ctx.send(f"⬇️ Загружаю: `{pretty_name(filename)}`")
-            local_file = await asyncio.to_thread(download_track, stream_url, filename)
-            
-            source = discord.FFmpegPCMAudio(
-                executable=config.FFMPEG_PATH,
-                source=local_file,
-                options="-vn -ar 48000 -ac 2"
-            )
+        skip_event.clear()
+        
+        stream_url = get_download_url(track["path"])
+        await ctx.send(f"⬇️ Загружаю: `{pretty_name(filename)}`")
+        local_file = await asyncio.to_thread(download_track, stream_url, filename)
+        
+        ffmpeg_options = "-vn -loglevel quiet -max_alloc 0 -ar 48000 -ac 2"
+        source = discord.FFmpegPCMAudio(
+            executable=config.FFMPEG_PATH,
+            source=local_file,
+            options=ffmpeg_options
+        )
 
         event = asyncio.Event()
 
         def after_play(error):
-            event.set()
+            if bot.loop.is_running():
+                bot.loop.call_soon_threadsafe(event.set)
+
+        if voice.is_playing() or voice.is_paused():
+            voice.stop()
 
         voice.play(source, after=after_play)
-
         await ctx.send(f"▶️ Из папки **[{track_user}]** играет: `{pretty_name(filename)}`")
 
         await event.wait()
+        
         try:
-            os.remove(local_file)
+            if os.path.exists(local_file):
+                os.remove(local_file)
         except:
             pass
 
@@ -267,7 +277,8 @@ async def pause(ctx):
 
 @bot.command(name="дальше", aliases=["next"])
 async def next(ctx):
-    """Пропустить текущий трек (вперед)"""
+    """Пропустить текущий трек (вперёд)"""
+    
     if ctx.voice_client:
         ctx.voice_client.stop()
         await ctx.send("⏭ Трек пропущен")
@@ -276,6 +287,7 @@ async def next(ctx):
 @bot.command(name="прошлый", aliases=["prev"])
 async def prev(ctx):
     """Вернуться к предыдущему треку"""
+    
     global is_skipping_backward
     voice = ctx.voice_client
     
@@ -290,6 +302,8 @@ async def prev(ctx):
 
 @bot.command(name="помощь", aliases=["help"])
 async def help(ctx):
+    """Выводит список команд"""
+    
     text = (
         "🐾 **Мяу! Я умею вот что:**\n\n"
         "🎵 **Проигрывать музыку:**\n"
@@ -313,6 +327,8 @@ async def help(ctx):
     
 @bot.command(name="добавить")
 async def add_track(ctx):
+    """Добавляет трек в облако и обновляет плейлист"""
+    
     if not ctx.message.attachments:
         return await ctx.send("Прикрепи файл 😼")
 
