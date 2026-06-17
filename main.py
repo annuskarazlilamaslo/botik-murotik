@@ -91,14 +91,17 @@ async def play_playlist(ctx, voice):
         skip_event.clear()
         
         stream_url = get_download_url(track["path"])
-        await ctx.send(f"⬇️ Загружаю: `{pretty_name(filename)}`")
         local_file = await asyncio.to_thread(download_track, stream_url, filename)
         
-        ffmpeg_options = "-vn -loglevel quiet -max_alloc 0 -ar 48000 -ac 2"
+        ffmpeg_options = {
+            'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5',
+            'options': '-vn -ar 48000 -ac 2 -b:a 192k'
+        }
+        
         source = discord.FFmpegPCMAudio(
             executable=config.FFMPEG_PATH,
             source=local_file,
-            options=ffmpeg_options
+            **ffmpeg_options
         )
 
         event = asyncio.Event()
