@@ -77,18 +77,10 @@ async def play_playlist(ctx, voice):
             else:
                 await ctx.send("⏹ Плейлист закончен")
                 return
-        if player.current_index >= len(player.playlist):
-            if player.loop_mode:
-                player.current_index = 0
-            else:
-                await ctx.send("⏹ Плейлист закончен")
-                return
 
         track = player.playlist[player.current_index]
         filename = track["name"]
         track_user = track.get("user", "Общий")
-
-        skip_event.clear()
         
         stream_url = get_download_url(track["path"])
         local_file = await asyncio.to_thread(download_track, stream_url, filename)
@@ -101,7 +93,7 @@ async def play_playlist(ctx, voice):
         source = discord.FFmpegPCMAudio(
             executable=config.FFMPEG_PATH,
             source=local_file,
-            **ffmpeg_options
+            options="-vn -ar 48000 -ac 2"
         )
 
         event = asyncio.Event()
