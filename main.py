@@ -60,7 +60,7 @@ async def play_playlist(ctx, voice):
             executable=config.FFMPEG_PATH,
             source=stream_url,
             before_options="-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5",
-            options="-vn -buffer_size 4000k",
+            options="-vn"
         )
         
         await asyncio.sleep(1)
