@@ -1,6 +1,7 @@
-import os
+
 import random
-from config import MUSIC_DIR
+from cloud_manager import get_cloud_tracks
+
 
 class MusicPlayer:
     def __init__(self):
@@ -10,27 +11,20 @@ class MusicPlayer:
         self.shuffle_mode = True
 
     def load_playlist(self):
-        """Сканирует локальную папку и обновляет текущий плейлист"""
-        found_files = []
-        if not os.path.exists(MUSIC_DIR):
-            return []
-            
-        for root, dirs, files in os.walk(MUSIC_DIR):
-            for file in files:
-                if file.lower().endswith((".mp3", ".wav", ".ogg")):
-                    relative_path = os.path.relpath(os.path.join(root, file), MUSIC_DIR)
-                    found_files.append(relative_path)
-                    
+        """Запрашивает список файлов из Google Диска и обновляет плейлист"""
+        
+        found_files = get_cloud_tracks()
+        
         self.playlist = found_files
         
         if self.shuffle_mode:
             random.shuffle(self.playlist)
         else:
-            self.playlist.sort()
+            self.playlist.sort(key=lambda x: x['name'])
             
         return self.playlist
     
-     def get_previous_index(self):
+    def get_previous_index(self):
         """Высчитывает индекс предыдущего трека"""
         if not self.playlist:
             return 0

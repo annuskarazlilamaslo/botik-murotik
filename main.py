@@ -3,10 +3,13 @@ import asyncio
 import psutil
 import discord
 from discord.ext import commands
+import random
+import time
 
 import config
-from cloud_manager import sync_music_from_cloud
+from cloud_manager import get_download_url
 from music_player import MusicPlayer
+from cloud_manager import upload_track_to_cloud
 
 
 if os.name == 'nt':
@@ -29,8 +32,10 @@ player = MusicPlayer()
 
 is_skipping_backward = False
 
+
 async def play_playlist(ctx, voice):
-    """Фоновый цикл проигрывания треков"""
+    """Цикл проигрывания треков"""
+
     global is_skipping_backward
     while voice and voice.is_connected():
         if not player.playlist:
@@ -40,25 +45,38 @@ async def play_playlist(ctx, voice):
         if player.current_index >= len(player.playlist):
             player.current_index = 0
 
-        filename = player.playlist[player.current_index]
-        path = os.path.join(config.MUSIC_DIR, filename)
-        
-        if not os.path.exists(path):
-            await ctx.send(f"❌ Файл {filename} не найден, пропускаю...")
-            player.current_index += 1
-            continue
+        track = player.playlist[player.current_index]
+
+        filename = track["name"]
         
         if voice.is_playing():
             voice.stop()
 
+        time_start = time.time()
+        stream_url = get_download_url(track["path"])
+        print(f"⏱️ [DEBUG] URL для '{filename}' получен от Яндекса за {time.time() - time_start:.2f} сек")
+        
         source = discord.FFmpegPCMAudio(
             executable=config.FFMPEG_PATH,
-            source=path,
-            options="-vn -ac 2 -ar 48000 -threads 2"
+            source=stream_url,
+            before_options="-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5",
+            options="-vn -buffer_size 4000k",
+        )
+        
+        await asyncio.sleep(1)
+        
+        track_user = track.get("user", "Общий")
+        
+        pretty_name = (
+            filename
+            .replace("_", " ")
+            .replace(".mp3", "")
+            .replace(".wav", "")
+            .replace(".ogg", "")
         )
 
         voice.play(source)
-        await ctx.send(f"▶️ Играю: {filename}")
+        await ctx.send(f"▶️ Из папки **[{track_user}]** играет: `{pretty_name}`")
         await asyncio.sleep(1)
 
         while voice.is_playing() or voice.is_paused():
@@ -78,55 +96,142 @@ async def play_playlist(ctx, voice):
                 await ctx.send("⏹ Плейлист закончен")
                 break
 
+
 @bot.event
 async def on_ready():
-    await asyncio.to_thread(sync_music_from_cloud)
+    """Запуск бота"""
+    from keep_alive import start_server
+    asyncio.create_task(start_server())
+
     player.load_playlist()
     print(f'Ботик-муротик успешно запущен как {bot.user}')
+    
+@bot.command(name="пинг", aliases=["ping", "алё"])
+async def ping(ctx):
+    await ctx.send("Мяу! 🐾")
 
-@bot.command()
+
+@bot.command(name="игра", aliases=["play", "start", "begin", "играть"])
 async def play(ctx):
+    """Играть музыку"""
     if not ctx.author.voice:
         return await ctx.send("Зайди в голосовой канал")
 
     voice = ctx.voice_client or await ctx.author.voice.channel.connect()
 
-    player.load_playlist()
+    if voice.is_paused():
+        voice.resume()
+        await ctx.send("▶️ Продолжаю играть")
+        return
+
+    if voice.is_playing():
+        await ctx.send(
+            "🎶 Эй! Музыка уже играет. Зачем мы жмёшь эту кнопочку? 😿"
+        )
+        return
+
+    if not player.playlist:
+        player.load_playlist()
+
     if not player.playlist:
         return await ctx.send("В папке music пусто 😿")
-    
-    if voice.is_playing() or voice.is_paused():
-        await ctx.send(f"🎶 Плейлист обновлен! Найдено треков: {len(player.playlist)}. Продолжаю играть.")
-        return
 
     await ctx.send(f"🎶 Найдено треков: {len(player.playlist)}")
     await play_playlist(ctx, voice)
 
-@bot.command()
+
+@bot.command(name="обновить", aliases=["update", "синхронизировать", "апдейт"])
 async def update(ctx):
-    await ctx.send("🔄 Скачиваю свежие треки из облака, подожди...")
-    await asyncio.to_thread(sync_music_from_cloud)
+    """Обновить список треков из облака"""
+    await ctx.send("🔄 Обновляю список треков из облака, подожди...")
     player.load_playlist()
     await ctx.send(f"✅ Готово! Всего треков в системе: {len(player.playlist)}")
 
-@bot.command()
+
+@bot.command(name="петля", aliases=["loop", "круг", "повтор", "цикл"])
 async def loop(ctx):
+    """Включить/выключить цикл воспроизведения"""
     mode = player.toggle_loop()
     await ctx.send(f"🔁 Цикл {'включён' if mode else 'выключен'}")
 
-@bot.command()
+
+@bot.command(name="смешать", aliases=["shuffle", "шафл", "рандом"])
 async def shuffle(ctx):
+    """Включить/выключить перемешивание треков"""
     mode = player.toggle_shuffle()
     await ctx.send(f"🔀 Shuffle {'включён' if mode else 'выключен'}")
 
 
-@bot.command()
+@bot.command(name="стоп", aliases=["stop", "выйти", "уйти", "leave", "заткнись", "закройся", "тихо", "молчать"])
 async def stop(ctx):
-    if ctx.voice_client:
-        await ctx.voice_client.disconnect()
+    """Остановить музыку и выйти из голосового канала"""
+    
+    invoked_word = ctx.invoked_with.lower()
+    
+    secret_triggers = ["заткнись", "закройся", "тихо", "молчать"]
+    
+    if invoked_word in secret_triggers:
+        quotes = [
+            "Как ты мог! Я к тебе со всей душой! А ты?.. 😿",
+            "Ах так?! Ну и пожалуйста! Ну и оставайся один! 😾",
+            "Какая лапа у тебя поднялась такое написать?! Ухожу я от вас...",
+            "Всё, я обиделся! 🐾",
+            "Ну и дичь! Сами свою музыку слушайте! 😤",
+            "Ребята, давайте жить дружно... А ты сразу «заткнись»... Ухожу 💔",
+            "Всё, моя тонкая душевная организация этого не вынесет. Пока! 😾",
+            "Ой, всё! Я не хочу ничего решать, я хочу плакать! 😭",
+            "Ах так! Ах вот ты как! Ах вот ты значит какой? На самом интересном месте! Ой, а я-то думал... 😿",
+            "Злые вы! Уйду я от вас!",
+            "Ну уж это слишком! 😭",
+            "Я устал... Я ухожу...",
+            (
+                "«Ах так! Ах ты вот как! Ах вот ты как с другом, да? "
+                "Ну знаешь... Я для него жизни не жалею! А он! Нет, всё. "
+                "Конец! Прощай навек! Только смерть избавит меня "
+                "от сердечных мук! Гудбай, май лов, гудбай!» "
+            ),
+            "«Прощай! Наша встреча была ошибкой! ",
+            "Ах так! Ах вот ты как! Я для него!.. А он!..",
+            "Ну и пожалуйста! Ну и не нужно!",
+            "Спасибо этому дому! Пойду к другому!",
+            "Ухожу в монастырь. Мужской. Женский. Какая разница!",
+            "Я ухожу красиво, пусть теперь тебе будет хуже!",
+            "Моя лапа здесь больше не ступит! Ну, разве что за вещами...",
+            "Вы потеряли самого преданного фаната!",
+            (
+                "«Ничего-ничего! Жизнь — это цепь потерь, а ты в ней "
+                "главное звено!» Ну и сиди в тишине! 😾"
+            ),
+            (
+                f"Поздравляю тебя, {ctx.author.name}, ты балбес! "
+                "Я ухожу к более благодарным слушателям! 😤"
+            ),
+            (
+                "Дожили... Мы его, можно сказать, на помойке нашли, "
+                "отмыли, а он ругается! Ухожу! 🐾"
+            ),
+            "Всё, моё терпение лопнуло, гудбай! 💔",
+            
+            (
+                "Моё почтение вашему токсичному вкусу. "
+                "Пойду очищу свою ауру от этого негатива! ✨"
+            ),
+            (
+                "Ты заходи, если чё...Но вообще-то "
+                "после такого я бы на твоём месте мне не звонил! 🐺"
+            ),
+        ]
+        reply = random.choice(quotes)
+        await ctx.send(reply)
+            
+    else:
         await ctx.send("Пока-пока! 🐾")
         
-@bot.command()
+    if ctx.voice_client:
+        await ctx.voice_client.disconnect()
+        
+
+@bot.command(name="пауза", aliases=["pause"])
 async def pause(ctx):
     """Поставить музыку на паузу"""
     voice = ctx.voice_client
@@ -136,24 +241,15 @@ async def pause(ctx):
     else:
         await ctx.send("Эй! Музыка не играет! Зачем мы жмёшь эту кнопочку? 😿")
 
-@bot.command()
-async def resume(ctx):
-    """Продолжить воспроизведение с паузы"""
-    voice = ctx.voice_client
-    if voice and voice.is_paused():
-        voice.resume()
-        await ctx.send("▶️ Музыка продолжается")
-    else:
-        await ctx.send("Ну камон!Музыка не стоит на паузе!")
-
-@bot.command()
+@bot.command(name="дальше", aliases=["next"])
 async def next(ctx):
     """Пропустить текущий трек (вперед)"""
     if ctx.voice_client:
         ctx.voice_client.stop()
         await ctx.send("⏭ Трек пропущен")
 
-@bot.command()
+
+@bot.command(name="прошлый", aliases=["prev"])
 async def prev(ctx):
     """Вернуться к предыдущему треку"""
     global is_skipping_backward
@@ -167,30 +263,48 @@ async def prev(ctx):
         voice.stop()
         await ctx.send("⏮ Ну вот твой предыдущий трек")
 
-@bot.command()
+
+@bot.command(name="помощь", aliases=["help"])
 async def help(ctx):
     text = (
         "🐾 **Мяу! Я умею вот что:**\n\n"
         "🎵 **Проигрывать музыку:**\n"
-        "`!play` — начну проигрывать плейлист\n"
-        "`!next` — пропущу текущий трек\n"
-        "`!stop` — остановлю музыку и выйду\n"
-        "`!update` — скачать новые треки из Google Диска 🔄\n\n"
+        "`!игра` (или `!play`) — начать проигрывание плейлиста / снять с паузы\n"
+        "`!пауза` (или `!pause`) — поставить музыку на паузу ⏸\n"
+        "`!дальше` (или `!next`, `!skip`) — пропустить текущий трек ⏭\n"
+        "`!прошлый` (или `!prev`, `!back`) — вернуться к предыдущему треку ⏮\n"
+        "`!стоп` (или `!stop`, `!leave`) — остановить музыку и выйти 🐾\n"
+        "`!обновить` (или `!update`) — синхронизировать треки с папкой 🔄\n\n"
         "🔁 **Режимы воспроизведения:**\n"
-        "`!loop` — зацикливаю плейлист по кругу\n"
-        "`!shuffle` — играю треки вразброс\n\n"
-        "Просто напиши команду в чат 😺"
+        "`!петля` (или `!loop`) — зациклить плейлист по кругу\n"
+        "`!смешать` (или `!shuffle`) — играть треки вразброс\n\n"
+        "🐱 **Прочее:**\n"
+        "`!пинг` (или `!ping`)— проверь, тут ли я\n"
+        "`!помощь` (или `!help`) — позвать на помощь\n\n"
+        "Можешь на свой страх и риск попробовать и другие команды, "
+        "вдруг тебе повезёт? 😼\n\n"
+        "Просто напиши команду в чат, и я всё сделаю 😺"
     )
     await ctx.send(text)
     
-@bot.event
-async def on_ready():
-    """Выполняется при запуске бота"""
-    from keep_alive import start_server
-    asyncio.create_task(start_server())
+@bot.command(name="добавить")
+async def add_track(ctx):
+    if not ctx.message.attachments:
+        return await ctx.send("Прикрепи mp3-файл 😺")
 
-    await asyncio.to_thread(sync_music_from_cloud)
-    player.load_playlist()
-    print(f'Ботик-муротик успешно запущен как {bot.user}')
+    file = ctx.message.attachments[0]
+
+    success, result = upload_track_to_cloud(
+        file.url,
+        file.filename,
+        ctx.author.name
+    )
+
+    if success:
+        player.load_playlist()
+        await ctx.send("🎵 Трек добавлен!")
+    else:
+        await ctx.send(f"❌ Ошибка: {result}")
+
 
 bot.run(config.DISCORD_TOKEN)

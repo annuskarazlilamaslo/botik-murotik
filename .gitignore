@@ -3,3 +3,4 @@ music/
 __pycache__/
 *.pyc
 config.py
+.env 

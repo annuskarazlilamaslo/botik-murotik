@@ -1,9 +1,10 @@
 from aiohttp import web
-import asyncio
+
 
 async def handle(request):
     """Простой обработчик для проверки работоспособности сервера"""
     return web.Response(text="Бот работает!")
+
 
 async def start_server():
     """Запуск сервера для поддержания бота активным"""
