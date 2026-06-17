@@ -183,6 +183,7 @@ async def stop(ctx):
     
     if invoked_word in secret_triggers:
         reply = random.choice(QUOTES)
+        reply = reply.replace("{user}", ctx.author.name)
         await ctx.send(reply)
     else:
         await ctx.send("Пока-пока! 🐾")
