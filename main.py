@@ -93,7 +93,7 @@ async def play_playlist(ctx, voice):
             if err:
                 print("FFMPEG ERROR:", err)
 
-        bot.loop.call_soon_threadsafe(event.set)
+            bot.loop.call_soon_threadsafe(event.set)
 
         source = discord.FFmpegPCMAudio(
             executable=config.FFMPEG_PATH,
