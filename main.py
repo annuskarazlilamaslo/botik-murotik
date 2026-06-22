@@ -1,4 +1,4 @@
-import os
+# import os
 import asyncio
 import discord
 from discord.ext import commands
@@ -17,19 +17,19 @@ bot.remove_command("help")
 player = MusicPlayer()
 
 is_skipping_backward = False
-skip_event = asyncio.Event()
+# skip_event = asyncio.Event()
 
 
-def download_track(url, filename):
-    path = f"/tmp/{filename}"
-    r = requests.get(url, stream=True, timeout=60)
-    r.raise_for_status()
+# def download_track(url, filename):
+#     path = f"/tmp/{filename}"
+#     r = requests.get(url, stream=True, timeout=60)
+#     r.raise_for_status()
 
-    with open(path, "wb") as f:
-        for chunk in r.iter_content(1024 * 256):
-            f.write(chunk)
+#     with open(path, "wb") as f:
+#         for chunk in r.iter_content(1024 * 256):
+#             f.write(chunk)
 
-    return path
+#     return path
 
 
 def pretty_name(filename):
@@ -42,15 +42,11 @@ def pretty_name(filename):
 
 
 async def play_playlist(ctx, voice):
-    print("🟢 START LOOP") #
     global is_skipping_backward
     
-    print(f"🎧 PLAY INDEX: {player.current_index}") #
-
     while True:
         
         if not ctx.voice_client or not voice or not voice.is_connected():
-            print("❌ Voice disconnected")
             return
 
         if not player.playlist:
@@ -65,29 +61,17 @@ async def play_playlist(ctx, voice):
                 return
 
         track = player.playlist[player.current_index]
-        print(
-            "🎵 NEXT TRACK:",
-            player.current_index,
-            track["name"] #
-        )
 
         filename = track["name"]
         user = track.get("user", "Общий")
         
         try:
-
             stream_url = get_download_url(track["path"])
 
-            local_file = await asyncio.to_thread(
-                download_track, stream_url, filename
-            )
         except Exception as e:
-            print("❌ DOWNLOAD ERROR:", e)
-
+            print("❌ URL ERROR:", e)
             await asyncio.sleep(5)
             continue
-
-        event = asyncio.Event()
 
         def after_play(err):
             if err:
@@ -97,40 +81,29 @@ async def play_playlist(ctx, voice):
 
         source = discord.FFmpegPCMAudio(
             executable=config.FFMPEG_PATH,
-            source=local_file,
-            #options="-vn -loglevel quiet"
-            options="-vn -loglevel verbose"
+            source=stream_url,
+            before_options=(
+                "-reconnect 1 "
+                "-reconnect_streamed 1 "
+                "-reconnect_delay_max 5" 
+            ), options="-vn" 
         )
         
         if not ctx.voice_client or not voice or not voice.is_connected():
             return
 
-        print("▶️ voice.play()") #
         try:
             voice.play(source, after=after_play)
         except Exception as e:
             print("❌ PLAY ERROR:", e)
             await asyncio.sleep(5)
             continue
-        print("⏳ waiting event")
 
         await ctx.send(
             f"▶️ Из папки **[{user}]** играет: `{pretty_name(filename)}`"
         )
 
         await event.wait()
-        print("✅ event finished") #
-        print(
-            "VOICE:",
-            voice.is_connected(),
-            voice.is_playing()
-        )
-
-        try:
-            os.remove(local_file)
-        except Exception:
-            pass
-        print("💀 AFTER TRACK CLEANUP")#
 
         if is_skipping_backward:
             is_skipping_backward = False
@@ -142,9 +115,6 @@ async def play_playlist(ctx, voice):
 @bot.event
 async def on_ready():
     """Запуск бота"""
-    
-    from keep_alive import start_server
-    asyncio.create_task(start_server())
 
     player.load_playlist()
     print(f'Ботик-муротик успешно запущен как {bot.user}')
@@ -163,7 +133,10 @@ async def play(ctx):
     if not ctx.author.voice:
         return await ctx.send("Зайди в голосовой канал")
 
-    voice = ctx.voice_client or await ctx.author.voice.channel.connect()
+    voice = ctx.voice_client
+    
+    if not voice:
+        voice = await ctx.author.voice.channel.connect()
 
     if voice.is_paused():
         voice.resume()
@@ -190,12 +163,15 @@ async def update(ctx):
     
     await ctx.send("🔄 Обновляю список треков из облака, подожди...")
     player.load_playlist()
-    await ctx.send(f"✅ Готово! Всего треков в системе: {len(player.playlist)}")
+    await ctx.send(
+        f"✅ Готово! Всего треков в системе: {len(player.playlist)}"
+    )
 
 
 @bot.command(name="петля", aliases=["loop", "круг", "повтор", "цикл"])
 async def loop(ctx):
     """Включить/выключить цикл воспроизведения"""
+    
     mode = player.toggle_loop()
     await ctx.send(f"🔁 Цикл {'включён' if mode else 'выключен'}")
 
@@ -227,7 +203,7 @@ async def stop(ctx):
         try:
             if voice.is_playing() or voice.is_paused():
                 voice.stop()
-        except:
+        except Exception:
             pass
 
         await voice.disconnect()
@@ -256,9 +232,11 @@ async def next(ctx):
     """Пропустить текущий трек (вперёд)"""
     
     global is_skipping_backward
+    if not ctx.voice_client:
+        return await ctx.send("Бот не подключен к голосовому каналу!")
+        
     is_skipping_backward = False
     ctx.voice_client.stop()
-    player.current_index += 1
 
 
 @bot.command(name="прошлый", aliases=["prev"])
@@ -266,6 +244,9 @@ async def prev(ctx):
     """Вернуться к предыдущему треку"""
     
     global is_skipping_backward
+    
+    if not ctx.voice_client:
+        return await ctx.send("Бот не подключен к голосовому каналу!")
     
     if player.current_index > 0:
         player.current_index -= 1

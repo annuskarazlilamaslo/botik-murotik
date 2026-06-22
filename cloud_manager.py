@@ -19,7 +19,7 @@ def get_cloud_tracks():
         
         response.raise_for_status()
 
-        files = response.json()["_embedded"]["items"]
+        files = response.json().get("_embedded", {}).get("items", [])
 
         for file in files:
             if file.get("type") != "dir":
@@ -35,7 +35,7 @@ def get_cloud_tracks():
                 timeout=10
             )
             if inner_response.status_code == 200:
-                inner_files = inner_response.json()["_embedded"]["items"]
+                inner_files = inner_files = inner_response.json().get("_embedded", {}).get("items", [])
                 for inner_file in inner_files:
                     if inner_file.get("type") == "file" and inner_file.get("media_type") == "audio":
                         playlist.append({
@@ -69,7 +69,7 @@ def get_download_url(disk_path):
 
     response.raise_for_status()
 
-    return response.json()["href"]
+    return response.json().get("href")
 
 
 def ensure_user_folder(username):
@@ -82,7 +82,12 @@ def ensure_user_folder(username):
     response = requests.get(url, headers=headers, params={"path": folder_path}, timeout=5)
     if response.status_code == 404:
         print(f"📁 [Cloud] Создаю новую личную папку для: {username}")
-        requests.put(url, headers=headers, params={"path": folder_path}, timeout=5)
+        requests.put(
+            url,
+            headers=headers,
+            params={"path": folder_path},
+            timeout=5
+        )
     
     return folder_path
 
@@ -97,19 +102,24 @@ def upload_track_to_cloud(discord_file_url, filename, username):
     headers = {"Authorization": f"OAuth {config.YANDEX_DISK_TOKEN}"}
     
     try:
-        res = requests.get(upload_url, headers=headers, params={"path": cloud_file_path, "overwrite": "true"}, timeout=5)
-        if res.status_code != 200:
-            return False, f"Яндекс Диск отказал в загрузке (Код {res.status_code})"
+        response = requests.get(upload_url, headers=headers, params={"path": cloud_file_path, "overwrite": "true"}, timeout=5)
+        if response.status_code != 200:
+            return False, f"Яндекс Диск отказал в загрузке (Код {response.status_code})"
             
-        href = res.json().get("href")
+        href = response.json().get("href")
         
-        discord_res = requests.get(discord_file_url, stream=True, timeout=30)
-        if discord_res.status_code == 200:
-            put_res = requests.put(href, data=discord_res.raw, timeout=60)
-            if put_res.status_code in [200, 201]:
-                return True, cloud_file_path
-                
+        discord_response = requests.get(discord_file_url, stream=True, timeout=30)
+        if discord_response.status_code == 200:
+            return False, "Не удалось скачать файл из Discord."
+        try:
+            put_response = requests.put(href, data=discord_response.raw, timeout=60)
+            
+        finally:
+            discord_response.close()
+        if put_response.status_code in [200, 201]:
+            return True, cloud_file_path
         return False, "Не удалось передать файл в облако."
+                
     except Exception as e:
         print(f"❌ [Cloud] Ошибка при загрузке файла: {e}")
         return False, str(e)

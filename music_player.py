@@ -15,7 +15,7 @@ class MusicPlayer:
 
         found_files = get_cloud_tracks()
 
-        if found_files:
+        if found_files is not None:
             self.playlist = found_files
 
             if self.shuffle_mode:
@@ -28,17 +28,17 @@ class MusicPlayer:
             print("⚠ Использую предыдущий плейлист")
         return self.playlist
     
-    def get_previous_index(self):
-        """Высчитывает индекс предыдущего трека"""
-        if not self.playlist:
-            return 0
+    # def get_previous_index(self):
+    #     """Высчитывает индекс предыдущего трека"""
+    #     if not self.playlist:
+    #         return 0
             
-        new_index = self.current_index - 1
+    #     new_index = self.current_index - 1
         
-        if new_index < 0:
-            new_index = len(self.playlist) - 1
+    #     if new_index < 0:
+    #         new_index = len(self.playlist) - 1
             
-        return new_index
+    #     return new_index
 
     def toggle_loop(self):
         self.loop_mode = not self.loop_mode
