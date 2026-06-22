@@ -50,7 +50,7 @@ def get_cloud_tracks():
 
     except Exception as e:
         print(f"❌ [Cloud] Ошибка: {e}")
-        return []
+        return None
                 
 
 def get_download_url(disk_path):

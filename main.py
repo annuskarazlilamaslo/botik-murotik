@@ -42,11 +42,15 @@ def pretty_name(filename):
 
 
 async def play_playlist(ctx, voice):
+    print("🟢 START LOOP") #
     global is_skipping_backward
+    
+    print(f"🎧 PLAY INDEX: {player.current_index}") #
 
     while True:
         
         if not ctx.voice_client or not voice or not voice.is_connected():
+            print("❌ Voice disconnected")
             return
 
         if not player.playlist:
@@ -61,42 +65,72 @@ async def play_playlist(ctx, voice):
                 return
 
         track = player.playlist[player.current_index]
+        print(
+            "🎵 NEXT TRACK:",
+            player.current_index,
+            track["name"] #
+        )
 
         filename = track["name"]
         user = track.get("user", "Общий")
+        
+        try:
 
-        stream_url = get_download_url(track["path"])
+            stream_url = get_download_url(track["path"])
 
-        local_file = await asyncio.to_thread(
-            download_track, stream_url, filename
-        )
+            local_file = await asyncio.to_thread(
+                download_track, stream_url, filename
+            )
+        except Exception as e:
+            print("❌ DOWNLOAD ERROR:", e)
+
+            await asyncio.sleep(5)
+            continue
 
         event = asyncio.Event()
 
         def after_play(err):
-            bot.loop.call_soon_threadsafe(event.set)
+            if err:
+                print("FFMPEG ERROR:", err)
+
+        bot.loop.call_soon_threadsafe(event.set)
 
         source = discord.FFmpegPCMAudio(
             executable=config.FFMPEG_PATH,
             source=local_file,
-            options="-vn -loglevel quiet"
+            #options="-vn -loglevel quiet"
+            options="-vn -loglevel verbose"
         )
         
         if not ctx.voice_client or not voice or not voice.is_connected():
             return
 
-        voice.play(source, after=after_play)
+        print("▶️ voice.play()") #
+        try:
+            voice.play(source, after=after_play)
+        except Exception as e:
+            print("❌ PLAY ERROR:", e)
+            await asyncio.sleep(5)
+            continue
+        print("⏳ waiting event")
 
         await ctx.send(
             f"▶️ Из папки **[{user}]** играет: `{pretty_name(filename)}`"
         )
 
         await event.wait()
+        print("✅ event finished") #
+        print(
+            "VOICE:",
+            voice.is_connected(),
+            voice.is_playing()
+        )
 
         try:
             os.remove(local_file)
         except Exception:
             pass
+        print("💀 AFTER TRACK CLEANUP")#
 
         if is_skipping_backward:
             is_skipping_backward = False

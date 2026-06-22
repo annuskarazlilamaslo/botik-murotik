@@ -11,17 +11,21 @@ class MusicPlayer:
         self.shuffle_mode = True
 
     def load_playlist(self):
-        """Запрашивает список файлов из Google Диска и обновляет плейлист"""
-        
+        """Запрашивает список файлов из Яндекс Диска и обновляет плейлист"""
+
         found_files = get_cloud_tracks()
-        
-        self.playlist = found_files
-        
-        if self.shuffle_mode:
-            random.shuffle(self.playlist)
+
+        if found_files:
+            self.playlist = found_files
+
+            if self.shuffle_mode:
+                random.shuffle(self.playlist)
+            else:
+                self.playlist.sort(key=lambda x: x["name"])
+
+            print(f"✅ Плейлист обновлён ({len(self.playlist)} треков)")
         else:
-            self.playlist.sort(key=lambda x: x['name'])
-            
+            print("⚠ Использую предыдущий плейлист")
         return self.playlist
     
     def get_previous_index(self):
