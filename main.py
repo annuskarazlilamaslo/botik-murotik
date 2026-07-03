@@ -1,24 +1,35 @@
-# import os
+import os
 import asyncio
 import discord
 from discord.ext import commands
 import random
 import re
-import requests
 
 import config
 from cloud_manager import get_download_url, upload_track_to_cloud
 from music_player import MusicPlayer
-from texts import HELP_TEXT, QUOTES
+from texts import HELP_TEXT, QUOTES, ADMIN_HELP_TEXT
+from config import ADMIN_IDS
+from user_folders import get_folder_name, load_user_folders, save_user_folders
+from cloud_manager import list_folder_contents
+from admin import setup_admin_commands
+
+MAX_TRACKS_PER_USER = 50
+
+os.environ["NO_PROXY"] = "cloud-api.yandex.net"
 
 bot = commands.Bot(command_prefix='!', intents=discord.Intents.all())
 bot.remove_command("help")
 
 player = MusicPlayer()
 
-is_skipping_backward = False
-# skip_event = asyncio.Event()
+setup_admin_commands(bot, player)
 
+is_skipping_backward = False
+
+
+def is_admin(ctx) -> bool:
+    return ctx.author.id in ADMIN_IDS
 
 # def download_track(url, filename):
 #     path = f"/tmp/{filename}"
@@ -73,9 +84,11 @@ async def play_playlist(ctx, voice):
             await asyncio.sleep(5)
             continue
 
-        def after_play(err):
-            if err:
-                print("FFMPEG ERROR:", err)
+        event = asyncio.Event()
+        
+        def after_play(error):
+            if error:
+                print("FFMPEG ERROR:", error)
 
             bot.loop.call_soon_threadsafe(event.set)
 
@@ -86,7 +99,7 @@ async def play_playlist(ctx, voice):
                 "-reconnect 1 "
                 "-reconnect_streamed 1 "
                 "-reconnect_delay_max 5" 
-            ), options="-vn" 
+            ), options="-vn"
         )
         
         if not ctx.voice_client or not voice or not voice.is_connected():
@@ -117,7 +130,7 @@ async def on_ready():
     """Запуск бота"""
 
     player.load_playlist()
-    print(f'Ботик-муротик успешно запущен как {bot.user}')
+    print(f'Ботик-муротик запущен как {bot.user}')
     
 @bot.command(name="пинг", aliases=["ping", "алё"])
 async def ping(ctx):
@@ -260,28 +273,91 @@ async def prev(ctx):
 async def help(ctx):
     """Выводит список команд"""
     
-    await ctx.send(HELP_TEXT)
+    text = HELP_TEXT
+    if is_admin(ctx):
+        text += "\n\n" + ADMIN_HELP_TEXT
+
+    await ctx.send(text)
+  
     
-@bot.command(name="добавить")
+@bot.command(name="добавить", aliases=["загрузить", "add", "upload"])
 async def add_track(ctx):
     """Добавляет трек в облако и обновляет плейлист"""
-    
+
     if not ctx.message.attachments:
-        return await ctx.send("Прикрепи файл 😼")
+        return await ctx.send(
+            "😼 Прикрепи файл **в этом же сообщении** вместе с командой "
+            "`!добавить` — не отдельным сообщением, а сразу вместе, "
+            "иначе я не смогу его отправить!\n"
+            "Пример: набери `!добавить`, потом прикрепи файл кнопкой 📎 и отправь всё вместе."
+        )
+
+    folder_name = get_folder_name(ctx.author.id)
+    if folder_name is None:
+        return await ctx.send(
+            "❌ У тебя ещё нет своей папки. Сначала задай имя командой `!имя ТвоёИмя`"
+        )
+
+    folder_path = f"disk:/music/{folder_name}"
+
+    success, files = await list_folder_contents(folder_path)
+    if success and len(files) >= MAX_TRACKS_PER_USER:
+        return await ctx.send(
+            f"❌ У тебя уже {len(files)} треков — это максимум ({MAX_TRACKS_PER_USER}).\n"
+            f"Хочешь посмотреть свой список? Нажми: `!треки`"
+        )
 
     file = ctx.message.attachments[0]
 
-    success, result = upload_track_to_cloud(
-        file.url,
-        file.filename,
-        ctx.author.name
+    success, result = await upload_track_to_cloud(
+        discord_file_url=file.url,
+        filename=file.filename,
+        username=folder_name
     )
 
     if success:
         player.load_playlist()
-        await ctx.send("🎵 Трек добавлен!")
+        count = len(files) + 1 if files else 1
+        await ctx.send(f"🎵 Трек добавлен! ({count}/{MAX_TRACKS_PER_USER})")
     else:
         await ctx.send(f"❌ Ошибка: {result}")
+        
+
+@bot.command(name="имя")
+async def set_folder_name(ctx, *, name: str):
+    """Устанавливает имя папки для пользователя (можно только один раз)"""
+    folders = load_user_folders()
+    user_id = str(ctx.author.id)
+
+    # Уже есть своя папка?
+    if user_id in folders:
+        return await ctx.send(
+            f"❌ У тебя уже есть папка `{folders[user_id]}`. "
+            f"Поменять имя может только мой хозяин 🐈. Так что найди его, как правило, это админ канала. Возможно, их даже несколько..."
+        )
+
+    if name in folders.values():
+        return await ctx.send(f"❌ Имя `{name}` уже занято другим пользователем.")
+
+    folders[user_id] = name
+    save_user_folders(folders)
+    await ctx.send(
+        f"✅ Твоя папка теперь называется `{name}`. Мм-р, мяу! 🐾" 
+        )
+
+@bot.command(name="моя_папка")
+async def my_folder(ctx):
+    """Показывает имя своей папки"""
+
+    folders = load_user_folders()
+    user_id = str(ctx.author.id)
+
+    if user_id not in folders:
+        return await ctx.send(
+            "У тебя ещё нет папки. Задай её командой `!имя ТвоёИмя`"
+        )
+
+    await ctx.send(f"📁 Твоя папка: `{folders[user_id]}`")
 
 
 bot.run(config.DISCORD_TOKEN)
