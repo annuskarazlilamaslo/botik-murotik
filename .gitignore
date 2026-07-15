@@ -3,3 +3,5 @@ music/
 __pycache__/
 *.pyc
 .env 
+.toml
+user_folders.json
