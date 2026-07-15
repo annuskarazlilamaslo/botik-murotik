@@ -1,19 +1,26 @@
 import json
 import os
 
-USER_FOLDERS_FILE = "user_folders.json"
+import config
 
 
 def load_user_folders():
-    if os.path.exists(USER_FOLDERS_FILE):
-        with open(USER_FOLDERS_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
+    """Загружает привязанные папки пользователей из файла JSON."""
+
+    if os.path.exists(config.USER_FOLDERS_FILE):
+        with open(config.USER_FOLDERS_FILE, "r", encoding="utf-8") as file:
+            return json.load(file)
     return {}
 
 
 def save_user_folders(data):
-    with open(USER_FOLDERS_FILE, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
+    """
+    Если файла нет, создаёт его.
+    Сохраняет привязанные папки пользователей в JSON.
+    """
+    
+    with open(config.USER_FOLDERS_FILE, "w", encoding="utf-8") as file:
+        json.dump(data, file, ensure_ascii=False, indent=2)
 
 
 def get_folder_name(discord_id):
@@ -23,11 +30,12 @@ def get_folder_name(discord_id):
     return folders.get(str(discord_id))
 
 
-def set_folder_name(discord_id, name: str) -> tuple[bool, str]:
+def set_folder_name(discord_id, name):
     """
     Пытается назначить имя папки пользователю.
     Возвращает (успех: bool, сообщение: str).
     """
+
     folders = load_user_folders()
     user_id = str(discord_id)
 
@@ -42,18 +50,22 @@ def set_folder_name(discord_id, name: str) -> tuple[bool, str]:
     return True, f"Папка `{name}` назначена."
 
 
-def admin_set_folder_name(discord_id, name: str) -> tuple[bool, str]:
+def admin_set_folder_name(discord_id, name):
     """
     Принудительно назначает/меняет имя папки пользователю (для админов).
-    В отличие от set_folder_name, перезаписывает существующую привязку.
+    В отличие от set_folder_name, перезаписывает существующую привязку папки.
     Всё равно проверяет, что имя не занято другим пользователем.
     """
+
     folders = load_user_folders()
     user_id = str(discord_id)
 
     for uid, folder in folders.items():
         if folder == name and uid != user_id:
-            return False, f"Имя `{name}` уже занято другим пользователем (ID: {uid})."
+            return False, (
+                f"Имя `{name}` уже занято "
+                f"другим пользователем (ID: {uid})."
+            )
 
     old_name = folders.get(user_id)
     folders[user_id] = name
@@ -64,8 +76,9 @@ def admin_set_folder_name(discord_id, name: str) -> tuple[bool, str]:
     return True, f"Папка назначена: `{name}`"
 
 
-def remove_folder_binding(discord_id) -> tuple[bool, str]:
-    """Удаляет привязку пользователя (для админов)."""
+def remove_folder_binding(discord_id):
+    """Удаляет привязку папки пользователя (для админов)."""
+
     folders = load_user_folders()
     user_id = str(discord_id)
 
@@ -74,9 +87,10 @@ def remove_folder_binding(discord_id) -> tuple[bool, str]:
 
     old_name = folders.pop(user_id)
     save_user_folders(folders)
-    return True, f"Привязка удалена (была папка `{old_name}`)."
+    return True, f"Привязка папки удалена (была папка `{old_name}`)."
 
 
-def get_all_folders() -> dict:
-    """Возвращает все привязки (для команды списка)."""
+def get_all_folders():
+    """Читает и возвращает весь список пользователей и их папок из файла."""
+
     return load_user_folders()
