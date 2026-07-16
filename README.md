@@ -96,7 +96,7 @@ YANDEX_MUSIC_PATH = disk:/музыкальная_папка
 ADMIN_IDS=discord_id_1,discord_id_2
 ```
 
-**Discord Token** — создаётся в [Discord Developer Portal](https://discord.com/developers/applications). Обязательно включи и пригласи на сервер, дай боту права админа или пропиши их в настройках (на запись, чтение, подключение к голосовому каналу)
+**Discord Token** — создаётся в [Discord Developer Portal](https://discord.com/developers/applications). Обязательно включи. Пригласи бота на сервер, дай боту права админа или пропиши их в настройках (на запись, чтение, подключение к голосовому каналу)
 **Server Members Intent** и **Message Content Intent** в настройках бота (раздел Bot → Privileged Gateway Intents).
 
 **Yandex Disk Token** — получается через [OAuth Яндекса](https://oauth.yandex.ru/), приложению нужно дать права:
